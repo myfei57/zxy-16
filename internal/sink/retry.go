@@ -17,9 +17,16 @@ func Retry(recorder ResultRecorder, registry *Registry, record store.BatchRecord
 	for attempt := 0; attempt < budget; attempt++ {
 		err := registry.Deliver(sinkID, record.Lines)
 		if err != nil {
-			return recorder.RecordResult(record.ID, true, budget)
+			// Receiver error (connection failure, 5xx, ...): never a success.
+			// Record it as a failure so it advances the retry budget and lands
+			// in the failed/dead state, then keep retrying while budget allows.
+			last, _ = recorder.RecordResult(record.ID, false, budget)
+			continue
 		}
-		last, _ = recorder.RecordResult(record.ID, true, budget)
+		// Genuine delivery success: commit and stop retrying.
+		return recorder.RecordResult(record.ID, true, budget)
 	}
+	// Budget exhausted without a single success; the final record carries the
+	// failed/dead state set by the last RecordResult call above.
 	return last, nil
 }
