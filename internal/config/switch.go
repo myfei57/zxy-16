@@ -57,24 +57,21 @@ func (s *SwitchService) Path(sourceID string) string {
 }
 
 // Switch installs a new pipeline configuration. The config is written
-// durably first; only then is the old pipeline detached and the new one
-// attached.
+// durably first; only once that succeeds is the in-memory pipeline
+// replaced, so a failed config write leaves the running pipeline untouched.
 func (s *SwitchService) Switch(sourceID string, cfg PipelineConfig) (PipelineConfig, error) {
 	if sourceID == "" {
 		return PipelineConfig{}, errors.New("source id is required")
 	}
 	cfg.Active = true
 	cfg.Updated = s.now()
+	if err := s.fs.WriteJSON(s.Path(sourceID), cfg); err != nil {
+		return PipelineConfig{}, err
+	}
 	if s.swapper != nil {
-		if err := s.swapper.Detach(sourceID); err != nil {
-			return PipelineConfig{}, err
-		}
 		if err := s.swapper.Attach(sourceID, cfg); err != nil {
 			return PipelineConfig{}, err
 		}
-	}
-	if err := s.fs.WriteJSON(s.Path(sourceID), cfg); err != nil {
-		return PipelineConfig{}, err
 	}
 	if s.audit != nil {
 		_, _ = s.audit.Record("console", "pipeline.switch", "source", sourceID, "batch="+itoa(cfg.BatchSize))
